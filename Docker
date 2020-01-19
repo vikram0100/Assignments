@@ -1,0 +1,47 @@
+import sys
+import os
+import docker
+import subprocess
+from cgroups import Cgroup
+from cgroups.user import create_user_cgroups
+import getpass,grp
+
+if sys.version_info[0] < 3:
+    raise Exception("please upgrade the version, at least 3")
+
+login_user=getpass.getuser()
+print (login_user)
+user_group=[]
+
+groups = grp.getgrall()
+for group in groups:
+    for user in group[3]:
+        if user==login_user:
+            user_group.append(group[0])
+
+new_value={"production":{"cpu":40, "memory":500},"testing":{"cpu":50, "memory":800},"administrator":{"cpu":90, "memory":5000}}
+
+cpu=30
+memory=400
+matched_group="othergroup"
+for item in user_group:
+    for key,value in new_value.items():
+        if item==key:
+            cpu=value['cpu']
+            memory=value['memory']
+            matched_group=key
+            break
+create_user_cgroups(matched_group)
+# First we create the cgroup and we set it's cpu and memory limits
+cg = Cgroup(matched_group)
+cg.set_cpu_limit(cpu)  # TODO : get these as command line options
+cg.set_memory_limit(memory)
+
+myclient = docker.DockerClient(base_url='unix://var/run/docker.sock',timeout=10)
+container_list=subprocess.Popen('sudo docker ps -q', shell=True, stdout=subprocess.PIPE)
+text = container_list.communicate()[0].decode('utf-8')
+for i in text.splitlines():
+    dockercontainer=myclient.containers.get(i)
+    p_id = dockercontainer.attrs['State']['Pid']    
+    cg.add(p_id)
+
